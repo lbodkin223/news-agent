@@ -45,6 +45,13 @@ HN_KEYWORDS = [
 
 HN_MAX_STORIES = 500  # how many top/new stories to scan
 
-# --- Anthropic API (relevance scoring) ---
+# --- Anthropic API (relevance scoring & summarization) ---
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
+
+# --- Summarization ---
+SUMMARY_OUTPUT_DIR = os.environ.get("NEWS_AGENT_SUMMARY_DIR", "briefings")
+# Maximum characters of article text to include per article in the prompt.
+SUMMARY_MAX_ARTICLE_CHARS = 4_000
+# Maximum total characters of article text sent in one summarization request.
+SUMMARY_MAX_TOTAL_CHARS = 80_000

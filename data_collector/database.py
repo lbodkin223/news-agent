@@ -129,16 +129,56 @@ def mark_processed(conn: sqlite3.Connection, article_id: int):
 
 def get_articles_for_summarization(
     conn: sqlite3.Connection,
-) -> list[tuple[int, str, str, str | None, int]]:
+    since: Optional[str] = None,
+) -> list[dict]:
     """Return articles scored 3+ that are still awaiting summarization.
 
-    Returns (id, title, url, extracted_text, relevance_score).
+    Args:
+        conn: Active database connection.
+        since: Optional ISO-format datetime string.  Only articles with
+               ``created_at >= since`` are returned.  Pass ``None`` to
+               return all qualifying articles regardless of age.
+
+    Returns a list of dicts with keys:
+        id, title, source, url, published_date, extracted_text,
+        relevance_score.
     """
-    return conn.execute(
-        """SELECT id, title, url, extracted_text, relevance_score
-           FROM articles
-           WHERE relevance_score >= 3 AND processed = 0"""
-    ).fetchall()
+    if since:
+        rows = conn.execute(
+            """SELECT id, title, source, url, published_date,
+                      extracted_text, relevance_score
+               FROM articles
+               WHERE relevance_score >= 3
+                 AND processed = 0
+                 AND created_at >= ?
+               ORDER BY relevance_score DESC, created_at DESC""",
+            (since,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT id, title, source, url, published_date,
+                      extracted_text, relevance_score
+               FROM articles
+               WHERE relevance_score >= 3
+                 AND processed = 0
+               ORDER BY relevance_score DESC, created_at DESC"""
+        ).fetchall()
+
+    columns = [
+        "id", "title", "source", "url", "published_date",
+        "extracted_text", "relevance_score",
+    ]
+    return [dict(zip(columns, row)) for row in rows]
+
+
+def mark_articles_processed(conn: sqlite3.Connection, article_ids: list[int]):
+    """Bulk-mark a list of article IDs as processed."""
+    if not article_ids:
+        return
+    conn.executemany(
+        "UPDATE articles SET processed = 1 WHERE id = ?",
+        [(aid,) for aid in article_ids],
+    )
 
 
 def count_articles(db_path: Optional[str] = None) -> int:
