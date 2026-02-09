@@ -1,4 +1,4 @@
-"""Main entry point — orchestrates all data collectors."""
+"""Main entry point — orchestrates data collection, extraction, and scoring."""
 
 import argparse
 import logging
@@ -6,6 +6,7 @@ import sys
 
 from data_collector.database import count_articles, init_db
 from data_collector.hn_collector import collect_hn
+from data_collector.pipeline import process_articles
 from data_collector.reddit_collector import collect_reddit
 from data_collector.rss_collector import collect_rss
 
@@ -52,6 +53,16 @@ def main():
         help="Path to SQLite database (overrides NEWS_AGENT_DB env var)",
     )
     parser.add_argument(
+        "--process",
+        action="store_true",
+        help="Run extraction and relevance scoring after collection",
+    )
+    parser.add_argument(
+        "--process-only",
+        action="store_true",
+        help="Only run extraction and scoring (skip collection)",
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable debug logging",
@@ -65,20 +76,30 @@ def main():
 
     init_db(args.db)
 
-    sources = set(args.sources)
-    if "all" in sources:
-        results = run_all(db_path=args.db)
-    else:
-        results = {}
-        if "rss" in sources:
-            results["rss"] = collect_rss(db_path=args.db)
-        if "reddit" in sources:
-            results["reddit"] = collect_reddit(db_path=args.db)
-        if "hackernews" in sources:
-            results["hackernews"] = collect_hn(db_path=args.db)
+    if not args.process_only:
+        sources = set(args.sources)
+        if "all" in sources:
+            results = run_all(db_path=args.db)
+        else:
+            results = {}
+            if "rss" in sources:
+                results["rss"] = collect_rss(db_path=args.db)
+            if "reddit" in sources:
+                results["reddit"] = collect_reddit(db_path=args.db)
+            if "hackernews" in sources:
+                results["hackernews"] = collect_hn(db_path=args.db)
 
-    total = sum(results.values())
-    print(f"Done. Inserted {total} new articles: {results}")
+        total = sum(results.values())
+        print(f"Collection done. Inserted {total} new articles: {results}")
+
+    if args.process or args.process_only:
+        logger.info("=== Starting extraction & scoring pipeline ===")
+        stats = process_articles(db_path=args.db)
+        print(
+            f"Processing done. extracted={stats['extracted']}, "
+            f"scored={stats['scored']}, flagged={stats['flagged']}, "
+            f"skipped={stats['skipped']}"
+        )
 
 
 if __name__ == "__main__":
