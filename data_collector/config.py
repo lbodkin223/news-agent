@@ -55,3 +55,20 @@ SUMMARY_OUTPUT_DIR = os.environ.get("NEWS_AGENT_SUMMARY_DIR", "briefings")
 SUMMARY_MAX_ARTICLE_CHARS = 4_000
 # Maximum total characters of article text sent in one summarization request.
 SUMMARY_MAX_TOTAL_CHARS = 80_000
+
+# --- Delivery ---
+OUTPUT_DIR = os.environ.get("NEWS_AGENT_OUTPUT_DIR", "output")
+
+# Email via SMTP (set EMAIL_BACKEND=smtp)
+EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "")  # "smtp" or "sendgrid"
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("SMTP_USER", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+
+# Email via SendGrid (set EMAIL_BACKEND=sendgrid)
+SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
+
+# Common email settings
+EMAIL_FROM = os.environ.get("EMAIL_FROM", "")
+EMAIL_TO = os.environ.get("EMAIL_TO", "")  # comma-separated for multiple
