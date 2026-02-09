@@ -1,0 +1,143 @@
+# ─────────────────────────────────────────────────────────────
+#  News Agent — daily intelligence briefing
+#
+#  Runs the full pipeline at 07:00 AM Pacific every day.
+#  Caches the SQLite database between runs for dedup history.
+#  Posts to Slack on failure.
+#
+#  Required GitHub Secrets:
+#    ANTHROPIC_API_KEY          — Anthropic API key
+#    SLACK_WEBHOOK_URL          — Slack incoming-webhook URL
+#
+#  Optional GitHub Secrets:
+#    REDDIT_CLIENT_ID           — Reddit app client ID
+#    REDDIT_CLIENT_SECRET       — Reddit app client secret
+#    REDDIT_USER_AGENT          — PRAW user-agent string
+#    EMAIL_BACKEND              — "smtp" or "sendgrid"
+#    EMAIL_FROM / EMAIL_TO      — sender / recipient addresses
+#    SMTP_HOST / SMTP_PORT      — SMTP server
+#    SMTP_USER / SMTP_PASSWORD  — SMTP credentials
+#    SENDGRID_API_KEY           — SendGrid API key
+# ─────────────────────────────────────────────────────────────
+
+name: Daily Briefing
+
+on:
+  schedule:
+    # 07:00 AM Pacific = 15:00 UTC (DST) / 14:00 UTC (standard)
+    # Use 15:00 UTC to cover the later offset; close enough year-round.
+    - cron: "0 15 * * *"
+  workflow_dispatch:          # allow manual trigger from the Actions tab
+
+permissions:
+  contents: read
+
+env:
+  DB_FILE: news_agent.db
+  OUTPUT_DIR: output
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  daily-briefing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── checkout ─────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Python ───────────────────────────────────────────────
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ── restore cached database ──────────────────────────────
+      - name: Download database artifact
+        id: download-db
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: news-agent-db
+          path: .
+          search_artifacts: true
+          if_no_artifact_found: warn
+        continue-on-error: true
+
+      - name: Verify or initialise database
+        run: |
+          if [ -f "$DB_FILE" ]; then
+            echo "Restored database: $(stat -c%s "$DB_FILE") bytes"
+            # Quick integrity check
+            python -c "
+          import sqlite3, sys
+          try:
+              conn = sqlite3.connect('$DB_FILE')
+              conn.execute('PRAGMA integrity_check')
+              count = conn.execute('SELECT COUNT(*) FROM articles').fetchone()[0]
+              print(f'DB OK — {count} articles')
+          except Exception as e:
+              print(f'DB corrupt: {e}', file=sys.stderr)
+              sys.exit(1)
+          "
+          else
+            echo "No cached database found — starting fresh"
+          fi
+
+      # ── run pipeline ─────────────────────────────────────────
+      - name: Run daily pipeline
+        id: pipeline
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}
+          EMAIL_BACKEND: ${{ secrets.EMAIL_BACKEND }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          NEWS_AGENT_DB: ${{ env.DB_FILE }}
+          NEWS_AGENT_OUTPUT_DIR: ${{ env.OUTPUT_DIR }}
+        run: python main.py --daily --verbose
+
+      # ── persist database for next run ────────────────────────
+      - name: Upload database artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: news-agent-db
+          path: ${{ env.DB_FILE }}
+          retention-days: 90
+          overwrite: true
+
+      # ── upload briefing ──────────────────────────────────────
+      - name: Upload briefing artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: briefing-${{ github.run_number }}
+          path: ${{ env.OUTPUT_DIR }}/
+          retention-days: 30
+
+      # ── health check / Slack alert on failure ────────────────
+      - name: Notify Slack on failure
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: python scripts/notify_slack.py --failure --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      # ── health check / Slack summary on success ──────────────
+      - name: Notify Slack on success
+        if: success()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: python scripts/notify_slack.py --success --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
