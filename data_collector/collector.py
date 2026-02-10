@@ -6,6 +6,7 @@ import sys
 
 from data_collector.database import count_articles, init_db
 from data_collector.hn_collector import collect_hn
+from data_collector.newsapi_collector import collect_newsapi
 from data_collector.pipeline import process_articles
 from data_collector.reddit_collector import collect_reddit
 from data_collector.rss_collector import collect_rss
@@ -29,6 +30,9 @@ def run_all(db_path: str | None = None) -> dict[str, int]:
     logger.info("=== Starting Hacker News collection ===")
     results["hackernews"] = collect_hn(db_path=db_path)
 
+    logger.info("=== Starting NewsAPI collection ===")
+    results["newsapi"] = collect_newsapi(db_path=db_path)
+
     total_new = sum(results.values())
     total_db = count_articles(db_path)
     logger.info(
@@ -44,7 +48,7 @@ def main():
     parser.add_argument(
         "--sources",
         nargs="+",
-        choices=["rss", "reddit", "hackernews", "all"],
+        choices=["rss", "reddit", "hackernews", "newsapi", "all"],
         default=["all"],
         help="Which sources to collect from (default: all)",
     )
@@ -114,6 +118,8 @@ def main():
                 results["reddit"] = collect_reddit(db_path=args.db)
             if "hackernews" in sources:
                 results["hackernews"] = collect_hn(db_path=args.db)
+            if "newsapi" in sources:
+                results["newsapi"] = collect_newsapi(db_path=args.db)
 
         total = sum(results.values())
         print(f"Collection done. Inserted {total} new articles: {results}")

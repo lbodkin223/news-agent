@@ -2,7 +2,7 @@
 
 Automated intelligence briefing system for datacenter networking, hardware interconnects, and AI infrastructure news.
 
-Collects articles from RSS feeds, Reddit, and Hacker News, scores them for relevance using Claude, and produces structured daily or weekly briefings delivered via file and/or email.
+Collects articles from RSS feeds, Reddit, Hacker News, and NewsAPI, scores them for relevance using Claude, and produces structured daily or weekly briefings delivered via file and/or email.
 
 ## Pipeline
 
@@ -12,7 +12,7 @@ collect → extract → score → summarise → deliver
 
 | Stage | What it does |
 |---|---|
-| **Collect** | Pull articles from RSS feeds (`feedparser`), subreddits (`praw`), and Hacker News (REST API). Deduplicate by URL. |
+| **Collect** | Pull articles from RSS feeds (`feedparser`), subreddits (`praw`), Hacker News (REST API), and NewsAPI (`newsapi-python`). Deduplicate by URL. |
 | **Extract** | Fetch full article text from each URL using `trafilatura`, with `newspaper3k` as fallback. |
 | **Score** | Send title + body to Claude and get a 1–5 relevance score. Articles scoring 3+ are flagged for summarisation. |
 | **Summarise** | Batch all flagged articles into a single prompt and generate a structured briefing with sections for Top Stories, Datacenter Networking, Hardware & Interconnects, AI Demand Signals, and Worth Watching. |
@@ -32,6 +32,7 @@ news-agent/
 │   ├── rss_collector.py             # RSS feed collector
 │   ├── reddit_collector.py          # Reddit collector (PRAW)
 │   ├── hn_collector.py              # Hacker News API collector
+│   ├── newsapi_collector.py         # NewsAPI collector
 │   ├── extractor.py                 # Article text extraction
 │   ├── scorer.py                    # Claude relevance scoring (1–5)
 │   ├── pipeline.py                  # Extract + score orchestration
@@ -76,6 +77,7 @@ All settings are read from environment variables (or a `.env` file loaded by you
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `NEWSAPI_API_KEY` | *(empty — NewsAPI skipped)* | NewsAPI API key |
 | `REDDIT_CLIENT_ID` | *(empty — Reddit skipped)* | Reddit app client ID |
 | `REDDIT_CLIENT_SECRET` | *(empty)* | Reddit app client secret |
 | `REDDIT_USER_AGENT` | `news-agent/0.1 ...` | PRAW user-agent |
@@ -121,7 +123,7 @@ The `collector.py` module exposes finer-grained control:
 python -m data_collector.collector
 
 # Collect from specific sources
-python -m data_collector.collector --sources rss hackernews
+python -m data_collector.collector --sources rss hackernews newsapi
 
 # Collect + extract + score (no briefing)
 python -m data_collector.collector --process
@@ -151,6 +153,10 @@ python -m data_collector.collector --summarize-only --mode weekly
 
 Scans top and new stories for keyword matches: `datacenter`, `networking`, `switch`, `optical interconnect`, `AI infrastructure`.
 
+### NewsAPI
+
+Searches the `/v2/everything` endpoint for keyword matches: `datacenter networking`, `optical interconnect`, `silicon photonics`, `AI infrastructure`, `switch ASIC`, `co-packaged optics`. Requires a `NEWSAPI_API_KEY` (free tier available at [newsapi.org](https://newsapi.org)).
+
 ## Database
 
 SQLite with the following schema:
@@ -159,7 +165,7 @@ SQLite with the following schema:
 |---|---|---|
 | `id` | INTEGER | Primary key |
 | `title` | TEXT | Article title |
-| `source` | TEXT | e.g. `rss:https://...`, `reddit:r/networking`, `hackernews` |
+| `source` | TEXT | e.g. `rss:https://...`, `reddit:r/networking`, `hackernews`, `newsapi` |
 | `url` | TEXT | Unique — used for deduplication |
 | `published_date` | TEXT | ISO format from the source |
 | `raw_text` | TEXT | Summary/body from the feed |
@@ -220,6 +226,7 @@ The workflow in `.github/workflows/daily-briefing.yml` runs the full pipeline da
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Yes | Scoring + summarisation |
 | `SLACK_WEBHOOK_URL` | Yes | Pipeline health alerts |
+| `NEWSAPI_API_KEY` | No | NewsAPI collection |
 | `REDDIT_CLIENT_ID` | No | Reddit collection |
 | `REDDIT_CLIENT_SECRET` | No | Reddit collection |
 | `EMAIL_BACKEND` | No | `smtp` or `sendgrid` |
