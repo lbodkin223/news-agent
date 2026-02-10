@@ -45,6 +45,18 @@ HN_KEYWORDS = [
 
 HN_MAX_STORIES = 500  # how many top/new stories to scan
 
+# --- NewsAPI ---
+NEWSAPI_API_KEY = os.environ.get("NEWSAPI_API_KEY", "")
+
+NEWSAPI_KEYWORDS = [
+    "datacenter networking",
+    "optical interconnect",
+    "silicon photonics",
+    "AI infrastructure",
+    "switch ASIC",
+    "co-packaged optics",
+]
+
 # --- Anthropic API (relevance scoring & summarization) ---
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")

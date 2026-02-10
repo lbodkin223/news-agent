@@ -10,6 +10,7 @@
 #    SLACK_WEBHOOK_URL          — Slack incoming-webhook URL
 #
 #  Optional GitHub Secrets:
+#    NEWSAPI_API_KEY            — NewsAPI API key
 #    REDDIT_CLIENT_ID           — Reddit app client ID
 #    REDDIT_CLIENT_SECRET       — Reddit app client secret
 #    REDDIT_USER_AGENT          — PRAW user-agent string
@@ -94,6 +95,7 @@ jobs:
         id: pipeline
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
           REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
           REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
           REDDIT_USER_AGENT: ${{ secrets.REDDIT_USER_AGENT }}

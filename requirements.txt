@@ -3,4 +3,5 @@ praw>=7.0
 requests>=2.28
 trafilatura>=1.6
 newspaper3k>=0.2.8
+newsapi-python>=0.2.7
 anthropic>=0.39
