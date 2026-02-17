@@ -74,7 +74,7 @@ OUTPUT_DIR = os.environ.get("NEWS_AGENT_OUTPUT_DIR", "output")
 # Email via SMTP (set EMAIL_BACKEND=smtp)
 EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "")  # "smtp" or "sendgrid"
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_PORT = int(os.environ.get("SMTP_PORT") or "587")
 SMTP_USER = os.environ.get("SMTP_USER", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 
