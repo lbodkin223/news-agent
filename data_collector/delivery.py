@@ -1,5 +1,6 @@
 """Deliver briefings — save to file and / or send via email."""
 
+import html as html_mod
 import logging
 import os
 import smtplib
@@ -95,10 +96,10 @@ def send_via_smtp(
     # Plain-text part (the raw markdown is perfectly readable).
     msg.attach(MIMEText(briefing_text, "plain", "utf-8"))
 
-    # Simple HTML wrapper so links are clickable in email clients.
+    # Simple HTML wrapper so the briefing renders with proper whitespace.
     html_body = (
         "<html><body><pre style='font-family: sans-serif; white-space: pre-wrap;'>"
-        + briefing_text
+        + html_mod.escape(briefing_text)
         + "</pre></body></html>"
     )
     msg.attach(MIMEText(html_body, "html", "utf-8"))
@@ -202,11 +203,14 @@ def deliver(
     result: dict = {"file": None, "email": False}
 
     if not skip_file:
-        result["file"] = save_to_file(briefing_text, mode=mode, output_dir=output_dir)
+        try:
+            result["file"] = save_to_file(briefing_text, mode=mode, output_dir=output_dir)
+        except Exception:
+            logger.exception("Failed to save briefing to file")
 
     if skip_email or not EMAIL_BACKEND:
         if not skip_email and not EMAIL_BACKEND:
-            logger.debug(
+            logger.warning(
                 "EMAIL_BACKEND not configured — email delivery skipped."
             )
         return result
