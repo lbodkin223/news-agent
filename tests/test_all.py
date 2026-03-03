@@ -1,7 +1,7 @@
 """Comprehensive test suite for news-agent.
 
 Covers: config, database (schema + migrations + dedup + queries),
-extractor fallback logic, scorer parsing, delivery (file + email skip),
+extractor fallback logic, keyword scorer, delivery (file + email skip),
 summarizer helpers, pipeline wiring, CLI arg parsing, and the
 notify_slack script.
 
@@ -44,14 +44,12 @@ class TestConfig:
     def test_config_imports(self):
         from data_collector.config import (
             DATABASE_PATH, RSS_FEEDS, SUBREDDITS, HN_KEYWORDS,
-            ANTHROPIC_MODEL, SUMMARY_OUTPUT_DIR, OUTPUT_DIR,
+            SUMMARY_OUTPUT_DIR, OUTPUT_DIR,
             EMAIL_BACKEND, SMTP_HOST, SENDGRID_API_KEY,
-            SUMMARY_MAX_ARTICLE_CHARS, SUMMARY_MAX_TOTAL_CHARS,
         )
         assert isinstance(RSS_FEEDS, list) and len(RSS_FEEDS) > 0
         assert isinstance(SUBREDDITS, list) and len(SUBREDDITS) > 0
         assert isinstance(HN_KEYWORDS, list) and len(HN_KEYWORDS) > 0
-        assert "claude" in ANTHROPIC_MODEL.lower() or "sonnet" in ANTHROPIC_MODEL.lower()
 
     def test_env_overrides(self):
         """Config values fall back to defaults when env vars are unset."""
@@ -251,45 +249,69 @@ class TestExtractor:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  Scorer
+#  Scorer (keyword-based)
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestScorer:
-    def test_parse_score_valid(self):
-        from data_collector.scorer import _parse_score
-        assert _parse_score("3") == 3
-        assert _parse_score("  5  ") == 5
-        assert _parse_score("Score: 4") == 4
-        assert _parse_score("1\n") == 1
-
-    def test_parse_score_invalid(self):
-        from data_collector.scorer import _parse_score
-        assert _parse_score("no number") is None
-        assert _parse_score("0") is None
-        assert _parse_score("") is None
-
-    def test_build_prompt_truncates(self):
-        from data_collector.scorer import _build_prompt, _MAX_TEXT_CHARS
-        long_text = "x" * (_MAX_TEXT_CHARS + 1000)
-        prompt = _build_prompt("Title", long_text)
-        # The text in the prompt should be truncated
-        assert len(prompt) < len(long_text) + 1000
-
-    def test_score_article_mock(self):
+    def test_no_keywords_returns_1(self):
         from data_collector.scorer import score_article
-        mock_client = MagicMock()
-        mock_msg = MagicMock()
-        mock_msg.content = [MagicMock(text="4")]
-        mock_client.messages.create.return_value = mock_msg
-        score = score_article("Test Title", "Test body", client=mock_client)
+        assert score_article("Cooking recipes for beginners", "How to bake a cake") == 1
+
+    def test_tier_2_body_match(self):
+        from data_collector.scorer import score_article
+        score = score_article("Tech news today", "Intel released a new chip for servers")
+        assert score == 2
+
+    def test_tier_3_body_match(self):
+        from data_collector.scorer import score_article
+        score = score_article("Industry update", "The new datacenter opened in Virginia")
+        assert score == 3
+
+    def test_tier_4_body_match(self):
+        from data_collector.scorer import score_article
+        score = score_article(
+            "Industry update",
+            "The company announced new 800G optical transceiver modules"
+        )
         assert score == 4
 
-    def test_score_article_api_failure(self):
+    def test_tier_5_body_match(self):
         from data_collector.scorer import score_article
-        mock_client = MagicMock()
-        mock_client.messages.create.side_effect = RuntimeError("boom")
-        score = score_article("Title", "text", client=mock_client)
-        assert score == 1  # fallback
+        score = score_article(
+            "Research paper released",
+            "Advances in silicon photonics for datacenter interconnects"
+        )
+        assert score == 5
+
+    def test_title_match_boosts_score(self):
+        from data_collector.scorer import score_article
+        # "datacenter" in title is tier 3 -> boosted to 4
+        score = score_article("New datacenter opens in Texas", "The facility is large")
+        assert score == 4
+
+    def test_title_match_tier_5_caps_at_5(self):
+        from data_collector.scorer import score_article
+        score = score_article("Silicon photonics breakthrough", "Details of the research")
+        assert score == 5  # tier 5 in title, boost would be 6 but capped
+
+    def test_highest_tier_wins(self):
+        from data_collector.scorer import score_article
+        # Has tier 2 ("nvidia") and tier 5 ("silicon photonics") — should get 5
+        score = score_article(
+            "Industry news",
+            "Nvidia invests in silicon photonics research for next-gen interconnects"
+        )
+        assert score == 5
+
+    def test_empty_text_still_scores_title(self):
+        from data_collector.scorer import score_article
+        score = score_article("Optical interconnect update", "")
+        assert score == 5  # tier 4 in title -> boosted to 5
+
+    def test_case_insensitive(self):
+        from data_collector.scorer import score_article
+        score = score_article("SILICON PHOTONICS NEWS", "big announcement")
+        assert score == 5
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -356,17 +378,53 @@ class TestSummarizer:
         diff = (datetime.now(tz=timezone.utc) - dt).total_seconds()
         assert 6 * 86400 < diff < 8 * 86400
 
-    def test_build_articles_block(self):
-        from data_collector.summarizer import _build_articles_block
+    def test_categorize_datacenter_networking(self):
+        from data_collector.summarizer import _categorize_article
+        art = {"title": "New spine-leaf deployment", "extracted_text": "network fabric upgrade"}
+        assert _categorize_article(art) == "Datacenter Networking"
+
+    def test_categorize_hardware(self):
+        from data_collector.summarizer import _categorize_article
+        art = {"title": "800G transceiver launch", "extracted_text": "silicon photonics module"}
+        assert _categorize_article(art) == "Hardware & Interconnects"
+
+    def test_categorize_ai_demand(self):
+        from data_collector.summarizer import _categorize_article
+        art = {"title": "GPU cluster expansion", "extracted_text": "ai infrastructure nvlink"}
+        assert _categorize_article(art) == "AI Demand Signals"
+
+    def test_categorize_fallback(self):
+        from data_collector.summarizer import _categorize_article
+        art = {"title": "Misc tech news", "extracted_text": "something unrelated"}
+        assert _categorize_article(art) == "Worth Watching"
+
+    def test_build_briefing_text_structure(self):
+        from data_collector.summarizer import _build_briefing_text
         articles = [
             {"title": "T1", "source": "rss:x", "url": "http://a.com",
-             "published_date": "2025-01-01", "extracted_text": "body",
-             "relevance_score": 4, "id": 1},
+             "published_date": "2025-01-01", "extracted_text": "silicon photonics body",
+             "relevance_score": 5, "id": 1},
+            {"title": "T2", "source": "hackernews", "url": "http://b.com",
+             "published_date": "2025-01-02", "extracted_text": "gpu cluster inference",
+             "relevance_score": 4, "id": 2},
         ]
-        block = _build_articles_block(articles)
-        assert "Article 1" in block
-        assert "http://a.com" in block
-        assert "T1" in block
+        text = _build_briefing_text(articles, "daily")
+        assert "# News Agent" in text
+        assert "## Top Stories" in text
+        assert "## Datacenter Networking" in text
+        assert "## Hardware & Interconnects" in text
+        assert "## AI Demand Signals" in text
+        assert "## Worth Watching" in text
+        assert "http://a.com" in text
+        assert "T1" in text
+
+    def test_leading_text_truncation(self):
+        from data_collector.summarizer import _leading_text
+        long_body = "First sentence. " + "x" * 400
+        art = {"extracted_text": long_body}
+        result = _leading_text(art)
+        assert len(result) <= 310  # 300 + "..."
+        assert result.endswith("...") or result.endswith(".")
 
     def test_write_briefing(self, tmp_output):
         from data_collector.summarizer import _write_briefing
@@ -380,6 +438,25 @@ class TestSummarizer:
         assert result["articles_used"] == 0
         assert result["briefing_file"] is None
         assert result["briefing_text"] is None
+
+    def test_generate_briefing_with_articles(self, tmp_db, tmp_output):
+        from data_collector.database import get_connection
+        from data_collector.summarizer import generate_briefing
+        now = datetime.now(tz=timezone.utc).isoformat()
+        with get_connection(tmp_db) as conn:
+            conn.execute(
+                """INSERT INTO articles
+                   (title,source,url,published_date,extracted_text,
+                    relevance_score,processed,created_at)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                ("Test Article", "rss:x", "http://test.com", now,
+                 "silicon photonics body text", 4, 0, now),
+            )
+        result = generate_briefing(mode="daily", db_path=tmp_db, output_dir=tmp_output)
+        assert result["articles_used"] == 1
+        assert result["briefing_file"] is not None
+        assert os.path.isfile(result["briefing_file"])
+        assert "Test Article" in result["briefing_text"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════

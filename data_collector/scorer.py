@@ -1,86 +1,125 @@
-"""Score article relevance using the Anthropic API."""
+"""Score article relevance using weighted keyword matching.
+
+No external API required.  Keywords are grouped into tiers that mirror
+the original 1-5 scoring rubric:
+
+  5 = Extremely relevant (optical interconnects, silicon photonics,
+      AI-driven network architecture)
+  4 = Highly relevant (datacenter networking, switch hardware, AI infra)
+  3 = Moderately relevant (adjacent: cloud, general networking, power)
+  2 = Tangentially related (tech industry, vendor names, servers)
+  1 = No keyword matches at all
+"""
 
 import logging
-import os
-import re
-from typing import Optional
-
-import anthropic
-
-from data_collector.config import ANTHROPIC_MODEL
 
 logger = logging.getLogger(__name__)
 
-SCORING_PROMPT = """\
-You are a relevance classifier for a news monitoring system focused on
-datacenter and networking infrastructure.
+# ── keyword tiers (all matched case-insensitively) ───────────────────────────
 
-Rate the following article on a scale of 1-5 for relevance to THESE topics:
-  • Datacenter networking infrastructure (design, buildouts, operations)
-  • Networking / switch hardware — especially optical interconnects and
-    silicon photonics
-  • AI compute demand and its impact on networking infrastructure
+TIER_5_KEYWORDS = [
+    "silicon photonics",
+    "co-packaged optics",
+    "optical interconnect",
+    "coherent optics",
+    "photonic integrated circuit",
+]
 
-Scoring guide:
-  1 = Completely unrelated
-  2 = Tangentially related (mentions tech industry but not the topics above)
-  3 = Moderately relevant (discusses adjacent topics like cloud, general
-      networking, or datacenter power/cooling)
-  4 = Highly relevant (directly about datacenter networking, switch
-      hardware, or AI infra networking)
-  5 = Extremely relevant (deep coverage of optical interconnects, silicon
-      photonics, or AI-driven network architecture changes)
+TIER_4_KEYWORDS = [
+    "datacenter networking",
+    "data center networking",
+    "switch asic",
+    "network fabric",
+    "spine-leaf",
+    "spine leaf",
+    "leaf-spine",
+    "top of rack",
+    "tor switch",
+    "optical transceiver",
+    "400g",
+    "800g",
+    "1.6t",
+    "nvlink",
+    "infiniband",
+    "ultra ethernet",
+    "smartnic",
+    "ai infrastructure",
+    "ai cluster",
+    "gpu cluster",
+    "training cluster",
+    "inference cluster",
+    "network switch",
+    "dpu",
+]
 
-Respond with ONLY a single integer (1-5) and nothing else.
+TIER_3_KEYWORDS = [
+    "datacenter",
+    "data center",
+    "colocation",
+    "networking",
+    "ethernet",
+    "cloud infrastructure",
+    "hyperscaler",
+    "hyperscale",
+    "accelerator",
+    "fiber optic",
+    "wavelength",
+    "multiplexing",
+    "power delivery",
+    "network architecture",
+]
 
-Article title: {title}
+TIER_2_KEYWORDS = [
+    "semiconductor",
+    "server",
+    "broadcom",
+    "arista",
+    "cisco",
+    "juniper",
+    "nvidia",
+    "intel",
+    "cloud computing",
+]
 
-Article text (truncated):
-{text}
-"""
-
-# Keep the text sent to the API under ~6 000 tokens worth of characters.
-_MAX_TEXT_CHARS = 12_000
-
-
-def _build_prompt(title: str, text: str) -> str:
-    truncated = text[:_MAX_TEXT_CHARS] if text else "(no body text available)"
-    return SCORING_PROMPT.format(title=title, text=truncated)
-
-
-def _parse_score(response_text: str) -> Optional[int]:
-    """Extract the first integer 1-5 from the model response."""
-    match = re.search(r"[1-5]", response_text.strip())
-    if match:
-        return int(match.group())
-    return None
+_TIERS = [
+    (5, TIER_5_KEYWORDS),
+    (4, TIER_4_KEYWORDS),
+    (3, TIER_3_KEYWORDS),
+    (2, TIER_2_KEYWORDS),
+]
 
 
-def score_article(
-    title: str,
-    text: str,
-    client: anthropic.Anthropic | None = None,
-) -> int:
-    """Return a 1-5 relevance score for an article.
+def score_article(title: str, text: str) -> int:
+    """Return a 1-5 relevance score for an article using keyword matching.
 
-    Falls back to score 1 if the API call fails.
+    Strategy:
+      1. Find the highest keyword tier that matches in the title or body.
+      2. If the highest-tier match appears in the *title*, boost by 1
+         (capped at 5) since title mentions are a strong signal.
+      3. No matches at all -> score 1.
     """
-    api_client = client or anthropic.Anthropic()  # reads ANTHROPIC_API_KEY env var
+    title_lower = title.lower()
+    text_lower = (text or "").lower()
 
-    prompt = _build_prompt(title, text)
+    max_tier = 0
+    title_match_tier = 0
 
-    try:
-        message = api_client.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=8,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        raw = message.content[0].text
-        score = _parse_score(raw)
-        if score is None:
-            logger.warning("Could not parse score from API response: %r", raw)
-            return 1
-        return score
-    except Exception:
-        logger.exception("Anthropic API call failed for article: %s", title)
+    for tier, keywords in _TIERS:
+        for kw in keywords:
+            if kw in title_lower:
+                if tier > max_tier:
+                    max_tier = tier
+                if tier > title_match_tier:
+                    title_match_tier = tier
+            elif kw in text_lower:
+                if tier > max_tier:
+                    max_tier = tier
+
+    if max_tier == 0:
         return 1
+
+    score = max_tier
+    if title_match_tier >= max_tier and score < 5:
+        score += 1
+
+    return min(score, 5)
